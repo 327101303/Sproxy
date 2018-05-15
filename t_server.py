@@ -1,7 +1,16 @@
+#!/usr/bin/env python
+# -*- coding:utf-8  -*-
+from tornado.tcpserver import TCPServer
+from tornado.iostream import StreamClosedError
+from tornado import gen
+import tornado
+from tornado import  iostream
+from tornado import  ioloop
+
 import sys
 import socket
 import select
-import SocketServer
+# import SocketServer
 import struct
 import string
 import hashlib
@@ -9,7 +18,6 @@ import os
 import json
 import logging
 import getopt
-
 
 def get_table(key):
     m = hashlib.md5()
@@ -33,11 +41,7 @@ def send_all(sock, data):
             return bytes_sent
 
 
-class ThreadingTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
-    allow_reuse_address = True
-
-
-class Socks5Server(SocketServer.StreamRequestHandler):
+class Socks5Server(TCPServer):
     def handle_tcp(self, sock, remote):
         try:
             fdset = [sock, remote]
@@ -62,25 +66,27 @@ class Socks5Server(SocketServer.StreamRequestHandler):
             sock.close()
             remote.close()
 
+
     def encrypt(self, data):
         return data.translate(encrypt_table)
 
     def decrypt(self, data):
         return data.translate(decrypt_table)
 
-    def handle(self):
+    def handle_stream(self, stream, address):
         try:
-            sock = self.connection
-            addrtype = ord(self.decrypt(sock.recv(1)))      # receive addr type
+
+            addrtype = ord(stream.read_bytes(1,self.decrypt))     # receive addr type
+            print addrtype
             if addrtype == 1:
-                addr = socket.inet_ntoa(self.decrypt(self.rfile.read(4)))   # get dst addr
+                addr = socket.inet_ntoa(stream.read_bytes(4,self.decrypt))   # get dst addr
             elif addrtype == 3:
-                addr = self.decrypt(self.rfile.read(ord(self.decrypt(sock.recv(1)))))       # read 1 byte of len, then get 'len' bytes name
+                addr = self.decrypt(stream.read_bytes(ord((stream.read_bytes(1,self.decrypt)))))       # read 1 byte of len, then get 'len' bytes name
             else:
                 # not support
                 logging.warn('addr_type not support')
                 return
-            port = struct.unpack('>H', self.decrypt(self.rfile.read(2)))    # get dst port into small endian
+            port = struct.unpack('>H', stream.read_bytes(2,self.decrypt))    # get dst port into small endian
             try:
                 logging.info('connecting %s:%d' % (addr, port[0]))
                 remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -90,9 +96,11 @@ class Socks5Server(SocketServer.StreamRequestHandler):
                 # Connection refused
                 logging.warn(e)
                 return
-            self.handle_tcp(sock, remote)
+            self.handle_tcp(stream.fileon(),remote)
         except socket.error, e:
             logging.warn(e)
+
+
 
 if __name__ == '__main__':
     os.chdir(os.path.dirname(__file__) or '.')
@@ -118,11 +126,12 @@ if __name__ == '__main__':
 
     encrypt_table = ''.join(get_table(KEY))
     decrypt_table = string.maketrans(encrypt_table, string.maketrans('', ''))
-    if '-6' in sys.argv[1:]:
-        ThreadingTCPServer.address_family = socket.AF_INET6
+
     try:
-        server = ThreadingTCPServer(('', PORT), Socks5Server)
+        server = Socks5Server()
+        server.listen(PORT)
+
+        ioloop.IOLoop.current().start()
         logging.info("starting server at port %d ..." % PORT)
-        server.serve_forever()
     except socket.error, e:
         logging.error(e)

@@ -39,7 +39,7 @@ import os
 import json
 import logging
 import getopt
-
+#
 def get_table(key):
     m = hashlib.md5()
     m.update(key)
